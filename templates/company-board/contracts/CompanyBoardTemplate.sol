@@ -58,49 +58,50 @@ contract CompanyBoardTemplate is BaseTemplate {
     {
         require(_boardVoteSettings.length == 3, ERROR_BAD_VOTE_SETTINGS);
         require(_shareVoteSettings.length == 3, ERROR_BAD_VOTE_SETTINGS);
-        (Agent agent, Finance finance) = _setupCommon(_financePeriod);
-        (TokenManager boardTokenManager, Voting boardVoting) = _setupBoard(_boardMembers, _boardVoteSettings[0], _boardVoteSettings[1], _boardVoteSettings[2]);
-        (TokenManager shareTokenManager, Voting shareVoting) = _setupShare(_shareHolders, _shareStakes, _shareVoteSettings[0], _shareVoteSettings[1], _shareVoteSettings[2]);
-        _setupPermissions(boardVoting, boardTokenManager, shareVoting, shareTokenManager, agent, finance);
-        _registerDAO(_id);
+
+        (Kernel dao, MiniMeToken boardToken, MiniMeToken shareToken) = _popCache(msg.sender);
+
+        (Agent agent, Finance finance) = _setupCommon(dao, _financePeriod);
+        (TokenManager boardTokenManager, Voting boardVoting) = _setupBoard(dao, boardToken, _boardMembers, _boardVoteSettings[0], _boardVoteSettings[1], _boardVoteSettings[2]);
+        (TokenManager shareTokenManager, Voting shareVoting) = _setupShare(dao, shareToken, _shareHolders, _shareStakes, _shareVoteSettings[0], _shareVoteSettings[1], _shareVoteSettings[2]);
+        _setupPermissions(dao, boardVoting, boardTokenManager, shareVoting, shareTokenManager, agent, finance);
+        _registerID(_id, dao);
     }
 
-    function _setupCommon(uint64 _financePeriod) internal returns (Agent _agent, Finance _finance) {
-        (Kernel dao,,) = _getCache(msg.sender);
+    function _setupCommon(Kernel _dao, uint64 _financePeriod) internal returns (Agent _agent, Finance _finance) {
 
         // Install apps
-        _agent = _installDefaultAgentApp(dao);
-        _finance = _installFinanceApp(dao, Vault(_agent), _financePeriod == 0 ? DEFAULT_FINANCE_PERIOD : _financePeriod); 
+        _agent = _installDefaultAgentApp(_dao);
+        _finance = _installFinanceApp(_dao, Vault(_agent), _financePeriod == 0 ? DEFAULT_FINANCE_PERIOD : _financePeriod); 
     }
 
-    function _setupBoard(address[] _boardMembers, uint64 _boardVoteDuration, uint64 _boardSupportRequired, uint64 _boardMinAcceptanceQuorum) internal returns(TokenManager _boardTokenManager, Voting _boardVoting) {
+    function _setupBoard(Kernel _dao, MiniMeToken _boardToken, address[] _boardMembers, uint64 _boardVoteDuration, uint64 _boardSupportRequired, uint64 _boardMinAcceptanceQuorum) internal returns(TokenManager _boardTokenManager, Voting _boardVoting) {
         require(_boardMembers.length > 0, ERROR_MISSING_BOARD_MEMBERS);
-        (Kernel dao, MiniMeToken boardToken,) = _getCache(msg.sender);
 
         // Install apps
-        ACL acl = ACL(dao.acl());
-        _boardTokenManager = _installTokenManagerApp(dao, boardToken, BOARD_TRANSFERABLE, BOARD_MAX_PER_ACCOUNT);
-        _boardVoting = _installVotingApp(dao, boardToken, _boardSupportRequired, _boardMinAcceptanceQuorum, _boardVoteDuration);
+        ACL acl = ACL(_dao.acl());
+        _boardTokenManager = _installTokenManagerApp(_dao, _boardToken, BOARD_TRANSFERABLE, BOARD_MAX_PER_ACCOUNT);
+        _boardVoting = _installVotingApp(_dao, _boardToken, _boardSupportRequired, _boardMinAcceptanceQuorum, _boardVoteDuration);
 
         // Mint tokens
         _mintBoardTokens(acl, _boardTokenManager, _boardMembers);
     }
 
-    function _setupShare(address[] _shareHolders, uint256[] _shareStakes, uint64 _shareVoteDuration, uint64 _shareSupportRequired, uint64 _shareMinAcceptanceQuorum) internal returns (TokenManager _shareTokenManager, Voting _shareVoting) {
+    function _setupShare(Kernel _dao, MiniMeToken _shareToken, address[] _shareHolders, uint256[] _shareStakes, uint64 _shareVoteDuration, uint64 _shareSupportRequired, uint64 _shareMinAcceptanceQuorum) internal returns (TokenManager _shareTokenManager, Voting _shareVoting) {
         require(_shareHolders.length > 0, ERROR_MISSING_SHARE_MEMBERS);
         require(_shareHolders.length == _shareStakes.length, ERROR_BAD_HOLDERS_STAKES_LEN);
-        (Kernel dao,, MiniMeToken shareToken) = _getCache(msg.sender);
 
         // Install apps
-        ACL acl = ACL(dao.acl());
-        _shareTokenManager = _installTokenManagerApp(dao, shareToken, SHARE_TRANSFERABLE, SHARE_MAX_PER_ACCOUNT);
-        _shareVoting = _installVotingApp(dao, shareToken, _shareSupportRequired, _shareMinAcceptanceQuorum, _shareVoteDuration);
+        ACL acl = ACL(_dao.acl());
+        _shareTokenManager = _installTokenManagerApp(_dao, _shareToken, SHARE_TRANSFERABLE, SHARE_MAX_PER_ACCOUNT);
+        _shareVoting = _installVotingApp(_dao, _shareToken, _shareSupportRequired, _shareMinAcceptanceQuorum, _shareVoteDuration);
 
         // Mint tokens
         _mintShareTokens(acl, _shareTokenManager, _shareHolders, _shareStakes);
     }
 
     function _setupPermissions(
+        Kernel _dao,
         Voting _boardVoting, 
         TokenManager _boardTokenManager,
         Voting _shareVoting,
@@ -110,8 +111,7 @@ contract CompanyBoardTemplate is BaseTemplate {
     ) 
         internal 
     {
-        (Kernel dao,,) = _getCache(msg.sender);
-        ACL acl = ACL(dao.acl());
+        ACL acl = ACL(_dao.acl());
         _createVaultPermissions(acl, Vault(agent), finance, _shareVoting);
         _createCustomAgentPermissions(acl, agent, _boardVoting, _shareVoting);
         _createCustomFinancePermissions(acl, finance, _boardVoting, _shareVoting);
@@ -119,12 +119,7 @@ contract CompanyBoardTemplate is BaseTemplate {
         _createCustomTokenManagerPermissions(acl, _shareTokenManager, _shareVoting);
         _createEvmScriptsRegistryPermissions(acl, _shareVoting, _shareVoting);
         _createCustomVotingPermissions(acl, _boardVoting, _shareVoting, _boardTokenManager);
-        _transferRootPermissionsFromTemplate(dao, _boardVoting, _shareVoting);
-    }
-
-    function _registerDAO(string _id) internal {
-        (Kernel dao,,) = _popCache(msg.sender);
-        _registerID(_id, dao);
+        _transferRootPermissionsFromTemplate(_dao, _boardVoting, _shareVoting);
     }
 
     function _mintShareTokens(ACL _acl, TokenManager _shareTokenManager, address[] _shareHolders, uint256[] _shareStakes) internal {
@@ -184,17 +179,14 @@ contract CompanyBoardTemplate is BaseTemplate {
         c.shareToken = address(_shareToken);
     }
 
-    function _getCache(address _owner) internal view returns (Kernel dao, MiniMeToken boardToken, MiniMeToken shareToken) {
+    function _popCache(address _owner) internal returns (Kernel dao, MiniMeToken boardToken, MiniMeToken shareToken) {
         Cache storage c = cache[_owner];
         require(c.dao != address(0) && c.boardToken != address(0) && c.shareToken != address(0), ERROR_MISSING_DAO_CACHE);
 
         dao = Kernel(c.dao);
         boardToken = MiniMeToken(c.boardToken);
         shareToken = MiniMeToken(c.shareToken);
-    }
 
-    function _popCache(address _owner) internal returns (Kernel dao, MiniMeToken boardToken, MiniMeToken shareToken) {
-        (dao, boardToken, shareToken) = _getCache(_owner);
         delete cache[_owner];
     }
 }
